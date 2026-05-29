@@ -6,7 +6,7 @@
       "name": "store",
       "devDependencies": {
         "prettier": "^3.2.5",
-        "turbo": "^2.0.14",
+        "turbo": "^2.9.14",
       },
     },
     "apps/backend": {

@@ -690,26 +690,27 @@ import {
     }
     async refundPayment(input: RefundPaymentInput): Promise<RefundPaymentOutput> {
       const { data, amount } = input;
-  
-      const id = (data as unknown as Orders.RazorpayOrder).id as string;
+
+      const id = ((data!.data as any).data as unknown as Orders.RazorpayOrder).id as string;
   
       const paymentList = await this.razorpay_.orders.fetchPayments(id);
   
       const payment_id = paymentList.items?.find((p) => {
         return (
-          parseInt(`${p.amount}`) >= Number(amount) * 100 &&
+          parseInt(`${p.amount}`) >= Number((amount as any).value) * 100 &&
           (p.status == "authorized" || p.status == "captured")
         );
       })?.id;
       if (payment_id) {
         const refundRequest = {
-          amount: Number(amount) * 100,
+          amount: Number((amount as any).value) * 100,
         };
         try {
           const refundSession = await this.razorpay_.payments.refund(
             payment_id,
             refundRequest
           );
+          console.log(refundSession)
           const refundsIssued = data?.refundSessions as Refunds.RazorpayRefund[];
           if (refundsIssued?.length > 0) {
             refundsIssued.push(refundSession);
@@ -719,6 +720,7 @@ import {
             }
           }
         } catch (e) {
+          console.log(e)
           new MedusaError(
             MedusaError.Types.INVALID_DATA,
             e,
