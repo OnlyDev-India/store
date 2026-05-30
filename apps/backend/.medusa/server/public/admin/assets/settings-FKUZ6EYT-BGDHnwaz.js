@@ -1,0 +1,1 @@
+import{eI as s,eD as a,cs as n,c8 as o,av as r}from"./index-D7kPCWOP.js";var c=()=>{const t=s(),e=a();return n.useEffect(()=>{e.pathname==="/settings"&&t("/settings/store",{replace:!0})},[e.pathname,t]),o.jsx(r,{})};export{c as Component};
