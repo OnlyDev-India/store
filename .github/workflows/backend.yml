@@ -91,6 +91,8 @@ jobs:
 
             sudo chown -R \$USER:\$USER \"\$APP_DIR\"
 
+            cd server
+
             echo 'Installing production dependencies...'
             bun install --frozen-lockfile
 
