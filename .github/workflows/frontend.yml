@@ -30,7 +30,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build frontend
-        run: bun build --filter=@dtc/storefront
+        run: bun run build --filter=@dtc/storefront
 
       - name: Deploy to EC2
         run: |

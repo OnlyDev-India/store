@@ -30,7 +30,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build backend
-        run: bun build --filter=@dtc/backend
+        run: bun run build --filter=@dtc/backend
         env:
           NODE_ENV: production
 
