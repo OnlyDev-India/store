@@ -3,15 +3,11 @@ name: Deploy Backend to EC2
 on:
   push:
     branches: [main]
-    paths:
-      - 'apps/backend/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'turbo.json'
-  workflow_dispatch:
+  workflow_dispatch: # manual trigger
 
 jobs:
-  build-and-deploy:
+  build:
+    name: Build Application
     runs-on: ubuntu-latest
 
     steps:
@@ -21,30 +17,92 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
+          node-version: "20.13.1"
+      
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build backend
+      - name: Build TypeScript
         run: bun run build --filter=@dtc/backend
         env:
           NODE_ENV: production
 
-      - name: Deploy to EC2
+      - name: Create deployment package (without node_modules)
         run: |
-          echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/ec2_key.pem
-          chmod 400 /tmp/ec2_key.pem
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
-          scp -i /tmp/ec2_key.pem -r apps/backend/.medusa/* ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/backend/
-          ssh -i /tmp/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "
-            cd /home/${{ secrets.EC2_USER }}/backend
-            cd server
-            bun install --frozen-lockfile
-            bun start
-          "
+          mkdir -p deploy
+          cp -r apps/backend/.medusa deploy/
+          tar -czf deploy.tar.gz -C deploy .
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-package
+          path: deploy.tar.gz
+          retention-days: 1
+
+  deploy:
+    name: Deploy to EC2
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-package
+
+      - name: Deploy to EC2 via SSH
         env:
-          NODE_ENV: production
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          scp -i ~/.ssh/deploy_key \
+            deploy.tar.gz "${EC2_USER}@${EC2_HOST}:/tmp/deploy.tar.gz"
+
+          ssh -i ~/.ssh/deploy_key "${EC2_USER}@${EC2_HOST}" "
+            set -e
+            APP_DIR=/home/${EC2_USER}/storebackend
+            mkdir -p \"\$APP_DIR\"
+
+            echo 'Fixing directory ownership...'
+            sudo chown -R \$USER:\$USER \"\$APP_DIR\"
+
+            cd \"\$APP_DIR\"
+
+            if [ -d dist ]; then
+              timestamp=\$(date +%Y%m%d_%H%M%S)
+              mkdir -p backups
+              tar -czf backups/backup_\${timestamp}.tar.gz dist package.json ecosystem.config.cjs .env 2>/dev/null || true
+              ls -t backups/backup_*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm
+            fi
+
+            echo 'Extracting new deployment package...'
+            tar --overwrite -xzf /tmp/deploy.tar.gz -C \"\$APP_DIR\"
+            rm /tmp/deploy.tar.gz
+
+            sudo chown -R \$USER:\$USER \"\$APP_DIR\"
+
+            cd .medusa/server
+
+            cp ~/.env.production .
+            
+            echo 'Installing production dependencies...'
+            bun install --frozen-lockfile
+
+            echo 'Starting application with PM2...'
+            if pm2 describe store-admin > /dev/null 2>&1; then
+              pm2 restart store-admin --update-env
+            else
+              pm2 start bun --name store-admin -- run start
+            fi
+            pm2 save
+          "
