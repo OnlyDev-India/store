@@ -38,11 +38,11 @@ jobs:
         run: |
           echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/ec2_key.pem
           chmod 400 /tmp/ec2_key.pem
-          scp -i /tmp/ec2_key.pem -r apps/backend/dist/* ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/backend/
+          scp -i /tmp/ec2_key.pem -r apps/backend/.medusa/* ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/backend/
           ssh -i /tmp/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "
-            cd /home/${{ secrets.EC2_USER }}/backend
+            cd /home/${{ secrets.EC2_USER }}/backend/server
             bun install --frozen-lockfile
-            bun medusa start
+            bun start
           "
         env:
           NODE_ENV: production
