@@ -3,15 +3,11 @@ name: Deploy Backend to EC2
 on:
   push:
     branches: [main]
-    paths:
-      - 'apps/backend/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'turbo.json'
-  workflow_dispatch:
+  workflow_dispatch: # manual trigger
 
 jobs:
-  build-and-deploy:
+  build:
+    name: Build Application
     runs-on: ubuntu-latest
 
     steps:
@@ -21,30 +17,101 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
+          node-version: "20.13.1"
+          cache: "bun"
+      
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build backend
+      - name: Build TypeScript
         run: bun run build --filter=@dtc/backend
         env:
           NODE_ENV: production
 
-      - name: Deploy to EC2
+      - name: Create deployment package (without node_modules)
         run: |
-          echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/ec2_key.pem
-          chmod 400 /tmp/ec2_key.pem
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
-          scp -i /tmp/ec2_key.pem -r apps/backend/.medusa/* ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/backend/
-          ssh -i /tmp/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "
-            cd /home/${{ secrets.EC2_USER }}/backend
-            cd server
-            bun install --frozen-lockfile
-            bun start
-          "
+          mkdir -p deploy
+          cp -r .medusa deploy/
+          tar -czf deploy.tar.gz -C deploy .
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-package
+          path: deploy.tar.gz
+          retention-days: 1
+
+  deploy:
+    name: Deploy to EC2
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-package
+
+      - name: Deploy to EC2 via SSH
         env:
-          NODE_ENV: production
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          # Create SSH key file
+          echo "$SSH_PRIVATE_KEY" > private_key.pem
+          chmod 600 private_key.pem
+
+          # Copy deployment package to EC2
+          scp -i private_key.pem -o StrictHostKeyChecking=no \
+            deploy.tar.gz ${EC2_USERNAME}@${EC2_HOST}:/tmp/
+
+          # SSH into EC2 and deploy
+          ssh -i private_key.pem -o StrictHostKeyChecking=no \
+            ${EC2_USERNAME}@${EC2_HOST} << 'EOF'
+            
+            # Navigate to app directory
+            cd /home/${EC2_USERNAME}/store1
+
+            # Fix ownership first (important!)
+            echo "Fixing directory ownership..."
+            sudo chown -R $USER:$USER /home/${EC2_USERNAME}/store1
+            
+            
+            # Backup current version
+            if [ -d "dist" ]; then
+              timestamp=$(date +%Y%m%d_%H%M%S)
+              mkdir -p backups
+              tar -czf backups/backup_${timestamp}.tar.gz dist package.json ecosystem.config.cjs .env 2>/dev/null || true
+              # Keep only last 5 backups
+              ls -t backups/backup_*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm
+            fi
+            
+            # Extract new version (this will overwrite existing files)
+            echo "Extracting new deployment package..."
+            tar --overwrite -xzf /tmp/deploy.tar.gz -C /home/${EC2_USERNAME}/store1
+            rm /tmp/deploy.tar.gz
+
+            # Fix ownership after extraction
+            sudo chown -R $USER:$USER /home/${EC2_USERNAME}/store1
+            
+            cd .mesuda
+            
+            # Install production dependencies on the server
+            echo ""
+            echo "Installing production dependencies..."
+            npm ci
+            
+            # Create .env file if needed (only on first deploy)
+            if [ ! -f .env ]; then
+              echo "Creating default .env file..."
+              echo "NODE_ENV=production" > .env
+            fi
+           
+          EOF
+
+          # Cleanup
+          rm private_key.pem
