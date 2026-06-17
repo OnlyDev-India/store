@@ -91,6 +91,8 @@ jobs:
 
             sudo chown -R \$USER:\$USER \"\$APP_DIR\"
 
+            ls -lart
+
             cd server
 
             echo 'Installing production dependencies...'
