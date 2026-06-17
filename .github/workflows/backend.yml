@@ -1,0 +1,45 @@
+name: Deploy Backend to EC2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/backend/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'turbo.json'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'bun'
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build backend
+        run: bun build --filter=@dtc/backend
+        env:
+          NODE_ENV: production
+
+      - name: Deploy to EC2
+        run: |
+          echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/ec2_key.pem
+          chmod 400 /tmp/ec2_key.pem
+          scp -i /tmp/ec2_key.pem -r apps/backend/dist/* ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/backend/
+          ssh -i /tmp/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "
+            cd /home/${{ secrets.EC2_USER }}/backend
+            bun install --frozen-lockfile
+            bun medusa start
+          "
+        env:
+          NODE_ENV: production
