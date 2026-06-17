@@ -6,12 +6,13 @@ on:
     paths:
       - 'apps/storefront/**'
       - 'package.json'
-      - 'pnpm-lock.yaml'
+      - 'bun.lock'
       - 'turbo.json'
   workflow_dispatch:
 
 jobs:
-  build-and-deploy:
+  build:
+    name: Build Application
     runs-on: ubuntu-latest
 
     steps:
@@ -21,7 +22,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20.13.1"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
@@ -31,15 +32,84 @@ jobs:
 
       - name: Build frontend
         run: bun run build --filter=@dtc/storefront
+        env:
+          NODE_ENV: production
 
-      - name: Deploy to EC2
+      - name: Create deployment package (without node_modules)
         run: |
-          echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/ec2_key.pem
-          chmod 400 /tmp/ec2_key.pem
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
-          scp -i /tmp/ec2_key.pem -r apps/storefront/dist/* ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/storefront/
-          ssh -i /tmp/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "
-            cd /home/${{ secrets.EC2_USER }}/storefront
-            bun install --frozen-lockfile
-            bun start
+          mkdir -p deploy
+          cp -r apps/storefront/.next deploy/
+          cp -r apps/storefront/public deploy/
+          cp apps/storefront/package.json deploy/
+          cp apps/storefront/next.config.js deploy/
+          cp apps/storefront/check-env-variables.js deploy/
+          tar -czf deploy.tar.gz -C deploy .
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-deployment-package
+          path: deploy.tar.gz
+          retention-days: 1
+
+  deploy:
+    name: Deploy to EC2
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-deployment-package
+
+      - name: Deploy to EC2 via SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          scp -i ~/.ssh/deploy_key \
+            deploy.tar.gz "${EC2_USER}@${EC2_HOST}:/tmp/frontend-deploy.tar.gz"
+
+          ssh -i ~/.ssh/deploy_key "${EC2_USER}@${EC2_HOST}" "
+            set -e
+            APP_DIR=/home/${EC2_USER}/storefront
+            mkdir -p \"\$APP_DIR\"
+
+            echo 'Fixing directory ownership...'
+            sudo chown -R \$USER:\$USER \"\$APP_DIR\"
+
+            cd \"\$APP_DIR\"
+
+            if [ -d .next ]; then
+              timestamp=\$(date +%Y%m%d_%H%M%S)
+              mkdir -p backups
+              tar -czf backups/backup_\${timestamp}.tar.gz .next public package.json next.config.js .env.production 2>/dev/null || true
+              ls -t backups/backup_*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm
+            fi
+
+            echo 'Extracting new deployment package...'
+            tar --overwrite -xzf /tmp/frontend-deploy.tar.gz -C \"\$APP_DIR\"
+            rm /tmp/frontend-deploy.tar.gz
+
+            sudo chown -R \$USER:\$USER \"\$APP_DIR\"
+
+            cp ~/.env.frontend .env
+
+            echo 'Installing production dependencies...'
+            bun install --production
+
+            echo 'Starting application with PM2...'
+            if pm2 describe store-front > /dev/null 2>&1; then
+              pm2 restart store-front --update-env
+            else
+              pm2 start bun --name store-front -- run start
+            fi
+            pm2 save
           "
