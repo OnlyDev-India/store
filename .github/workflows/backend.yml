@@ -91,10 +91,10 @@ jobs:
 
             sudo chown -R \$USER:\$USER \"\$APP_DIR\"
 
-            ls -lart
+            cd .medusa/server
 
-            cd server
-
+            cp ~/.env.production .
+            
             echo 'Installing production dependencies...'
             bun install --frozen-lockfile
 
@@ -102,4 +102,12 @@ jobs:
               echo 'Creating default .env file...'
               echo 'NODE_ENV=production' > .env
             fi
+
+            echo 'Starting application with PM2...'
+            if pm2 describe store-admin > /dev/null 2>&1; then
+              pm2 restart store-admin --update-env
+            else
+              pm2 start bun --name store-admin -- run start
+            fi
+            pm2 save
           "
