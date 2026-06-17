@@ -33,7 +33,7 @@ jobs:
       - name: Create deployment package (without node_modules)
         run: |
           mkdir -p deploy
-          cp -r .medusa deploy/
+          cp -r apps/backend/.medusa deploy/
           tar -czf deploy.tar.gz -C deploy .
 
       - name: Upload build artifact
@@ -97,8 +97,6 @@ jobs:
             # Fix ownership after extraction
             sudo chown -R $USER:$USER /home/${EC2_USERNAME}/store1
             
-            cd .mesuda
-
             # Install production dependencies on the server
             echo ""
             echo "Installing production dependencies..."
