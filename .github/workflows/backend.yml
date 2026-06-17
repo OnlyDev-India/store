@@ -98,11 +98,6 @@ jobs:
             echo 'Installing production dependencies...'
             bun install --frozen-lockfile
 
-            if [ ! -f .env ]; then
-              echo 'Creating default .env file...'
-              echo 'NODE_ENV=production' > .env
-            fi
-
             echo 'Starting application with PM2...'
             if pm2 describe store-admin > /dev/null 2>&1; then
               pm2 restart store-admin --update-env
