@@ -106,7 +106,7 @@ jobs:
             cp ~/.env.frontend .env
 
             echo 'Installing production dependencies...'
-            bun install --production
+            bun install
 
             echo 'Starting application with PM2...'
             if pm2 describe store-front > /dev/null 2>&1; then
